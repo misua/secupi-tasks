@@ -1,0 +1,11 @@
+## SecuPi Gateway related configuration
+#
+gateway:
+  cloudProvider: google
+  ingress:
+    enabled: false
+
+  service:
+    annotations:
+      cloud.google.com/app-protocols: '{{ include "secupi_gateway_app_protocols" . }}'
+      cloud.google.com/backend-config: '{{ include "secupi_gateway_backend-config" . }}'

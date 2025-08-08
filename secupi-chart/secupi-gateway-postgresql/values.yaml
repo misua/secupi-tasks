@@ -1,0 +1,156 @@
+clusterSizeType: mid
+## Gateway image settings
+#
+## Common defaults
+default:
+
+  # Security context version (keep at 1 unless instructed otherwise)  
+  securityContext:
+    version: 1 
+
+  # Pod annotations
+  podExtraAnnotations: {}
+
+image:
+  name: secupi-gateway
+  tag: 7.0.0.59
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: secupi-registry
+  repository: registry.gitlab.com/secupi/secupi-distribution
+
+kubernetesDNSDomain: null
+
+# openshift configuration
+openshift:
+  enabled: false
+  securityContextEnabled: false
+
+## SecuPi Gateway related configuration
+#
+gateway:
+
+  cloudProvider: null # google aws azure
+
+  ingress:
+    enabled: false
+    # For Kubernetes >= 1.18 you should specify the ingress-controller via the field ingressClassName
+    # See https://kubernetes.io/blog/2020/04/02/improvements-to-the-ingress-api-in-kubernetes-1.18/#specifying-the-class-of-an-ingress
+
+    # ingressClassName: public
+
+    annotations: {}
+      #nginx.ingress.kubernetes.io/rewrite-target: /
+      #nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+      #nginx.ingress.kubernetes.io/proxy-body-size: "0"
+      #kubernetes.io/ingress.class: nginx
+      #nginx.ingress.kubernetes.io/whitelist-source-range: <your white list IPs>
+
+    path: /
+    # pathType is only for k8s > 1.19
+    pathType: Prefix
+
+    hosts: []
+    #  - secupi-gateway.example.com
+
+    tls: 
+    - secretName: secupi-gateway-secret
+    #    hosts:
+    #      - secupi-gateway.example.com
+
+  service:
+    # ClusterIP, NodePort or LoadBalancer
+    # if not specified, kuberenetes uses ClusterIP
+    type: ClusterIP
+    # specify optional nodePort, only applicable if type is set to NodePort
+    #nodePort: 30002
+    # AWS frequently used annotations
+    # service.beta.kubernetes.io/aws-load-balancer-type: "nlb" # aws L4 LB
+    # service.beta.kubernetes.io/aws-load-balancer-internal: "true" # aws internal LB
+    # Azure frequently used annotations
+    # service.beta.kubernetes.io/azure-load-balancer-internal: "true" # azure internal LB
+    # Google Cloud frequently used annotations
+    # cloud.google.com/load-balancer-type: "Internal" # gcp internal LB
+    annotations: {}
+
+  # Number of gateway replicas.
+  replicaCount: 1
+
+  # External gateway port.
+  port: 5432
+
+  # Placeholders for custom file specification via helm command line, for example:
+  # helm install RELEASE_NAME <this-chart> --set-file gateway.keystore=/path/to/file
+  #keystore: null
+
+  # env is a dictionary of environment variables, where keys are variable names and values are their values.
+  env:
+    # Snowflake server hostname (account)
+    GATEWAY_SERVER_HOST: ""
+    SECUPI_BOOT_URL: ""
+    #GATEWAY_SERVER_PROXY_HOST: ""
+    #GATEWAY_SERVER_PROXY_PORT: ""
+    GATEWAY_HAZELCAST_SERVICE_DNS_NAME: "{{ include \"secupi_gateway_hz_service.name\" . }}.{{ .Release.Namespace }}.svc.{{ include \"kubernetes_dnsdomain\" . }}"
+    GATEWAY_SSL_ENABLED: "false"
+    GATEWAY_PORT: "5432"
+    #EXTRA_OPTS: "-Dsecupi.agent.host=https://webapps -Dsecupi.agent.ssl.hostnameVerifier.enabled=false -Dsecupi.agent.ssl.autoTrust.enabled=true -Dsecupi.agent.redis.timeout=15000"
+    GATEWAY_TYPE: "postgresql"
+    KEYSTORE_SSL_STOREPASS: "test123456"
+    KEYSTORE_SSL_PATH: "/opt/secupi/etc/keystore.jks"
+    KEYSTORE_SSL_ALIAS: "1"
+    GATEWAY_TRUST_ALL_BACKENDS: "true"
+    #GATEWAY_SAML_ENABLED: "true"
+    #KEYSTORE_SAML_PATH: "/opt/secupi/etc/keystore.jks"
+    #KEYSTORE_SAML_ALIAS: "1"
+    #KEYSTORE_SAML_STOREPASS: "OBF:1mt91jn31m7y1m8018qm18qo1m4e1m4g1jkf1mpt"
+    #GATEWAY_DEBUG_ENABLED: "true"
+    #GATEWAY_STATS_ENABLED: "true"
+
+  # podDisruptionBudget is gateway's podDisruptionBudget spec
+  podDisruptionBudget:
+    minAvailable: 1
+
+  nodeSelector: {}
+
+  # if create is false and name is not specified default service account will be used
+  serviceAccount:
+    create: false
+    name: ""
+    annotations: {}
+
+  resources:
+    mid:
+      limits:
+        memory: "4Gi"
+        #ephemeral_storage: 512Mi # example
+      requests:
+        cpu: "1000m"
+        memory: "4Gi"
+        #ephemeral_storage: 512Mi # example
+    large:
+      limits:
+        memory: "8Gi"
+        #ephemeral_storage: 512Mi # example
+      requests:
+        cpu: "2000m"
+        memory: "8Gi"
+        #ephemeral_storage: 512Mi # example
+
+ # Enable autoscaling using HorizontalPodAutoscaler
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 50
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80
+      - type: Resource
+        resource:
+          name: memory
+          target:
+            type: Utilization
+            averageUtilization: 80

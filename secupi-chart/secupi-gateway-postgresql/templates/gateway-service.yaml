@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "secupi_gateway.name" . }}
+  labels:
+    app: {{ include "secupi_gateway.label" . }}
+    {{- include "secupi_common.labels" . | nindent 4 }}
+  {{- if .Values.gateway.service.annotations }}
+  annotations: {{tpl (toYaml .Values.gateway.service.annotations) .  | nindent 4}}
+  {{- end }}
+spec:
+  ports:
+    - name: {{ include "secupi_gateway.name" . }}
+      port: {{ include "secupi_gateway_port" . }}
+      targetPort: {{ include "secupi_gateway_target_port" . }}
+      {{- if (.Values.gateway.service.type) }}
+        {{- if (and (eq .Values.gateway.service.type "NodePort") (not (empty .Values.gateway.service.nodePort))) }}
+      nodePort: {{ .Values.gateway.service.nodePort }}
+        {{- end }}
+      {{- end }}
+  selector:
+    app: {{ include "secupi_gateway.label" . }}
+  {{- if .Values.gateway.service.type }}
+  type: {{ .Values.gateway.service.type }}
+  {{- end }}

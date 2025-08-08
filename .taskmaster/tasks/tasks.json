@@ -1,0 +1,212 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": 2,
+        "title": "Set up Kubernetes Environment and Helm",
+        "description": "Prepare the Kubernetes cluster and install Helm 3 for deploying the Secupi Gateway.",
+        "details": "1. Ensure Kubernetes cluster version 1.16+ is available\n2. Install Helm 3 client using the official installation script:\n```bash\ncurl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash\n```\n3. Verify installation with:\n```bash\nhelm version\nkubectl version --short\n```\n4. Create a dedicated namespace for Secupi Gateway:\n```bash\nkubectl create namespace secupi\n```\n5. Set up resource quotas to ensure minimum 2 CPUs and 4GB RAM are available per gateway instance:\n```bash\nkubectl create -f - <<EOF\napiVersion: v1\nkind: ResourceQuota\nmetadata:\n  name: secupi-quota\n  namespace: secupi\nspec:\n  hard:\n    requests.cpu: \"4\"\n    requests.memory: 8Gi\n    limits.cpu: \"8\"\n    limits.memory: 16Gi\nEOF\n```",
+        "testStrategy": "1. Verify Kubernetes cluster accessibility with `kubectl cluster-info`\n2. Confirm Helm 3 installation with `helm version`\n3. Validate namespace creation with `kubectl get namespace secupi`\n4. Check resource quota with `kubectl get resourcequota -n secupi`",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 3,
+        "title": "Download and Extract Secupi Gateway Helm Chart",
+        "description": "Download the Secupi Gateway Helm chart from the provided URL and extract it for deployment.",
+        "details": "1. Download the Helm chart from the specified URL:\n```bash\nwget https://storage.googleapis.com/secupi-shared/secupi-gateway-postgresql-7.0.0-59.tgz\n```\n2. Extract the Helm chart to inspect its contents:\n```bash\nmkdir -p secupi-chart\ntar -xzvf secupi-gateway-postgresql-7.0.0-59.tgz -C secupi-chart\n```\n3. Review the chart structure and available configuration options:\n```bash\nls -la secupi-chart\ncat secupi-chart/values.yaml\n```\n4. Create a custom values file (values-custom.yaml) for your deployment configuration that will be used in subsequent tasks.",
+        "testStrategy": "1. Verify the Helm chart was downloaded successfully by checking file existence\n2. Confirm extraction completed without errors\n3. Validate chart structure contains expected files (Chart.yaml, values.yaml, templates/)",
+        "priority": "high",
+        "dependencies": [
+          2
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 4,
+        "title": "Create Kubernetes Secret for GitLab Container Registry",
+        "description": "Set up Kubernetes secret for authenticating with the GitLab container registry to pull the Secupi Gateway image.",
+        "details": "1. Obtain GitLab registry credentials from the Secupi team\n2. Create a Kubernetes secret for Docker registry authentication:\n```bash\nkubectl create secret docker-registry gitlab-registry-secret \\\n  --namespace secupi \\\n  --docker-server=registry.gitlab.com \\\n  --docker-username=<GITLAB_USERNAME> \\\n  --docker-password=<GITLAB_PASSWORD> \\\n  --docker-email=<EMAIL>\n```\n3. Verify the secret was created correctly:\n```bash\nkubectl get secret gitlab-registry-secret -n secupi -o yaml\n```\n4. Update your custom values file to reference this secret:\n```yaml\nimagePullSecrets:\n  - name: gitlab-registry-secret\n```",
+        "testStrategy": "1. Verify secret creation with `kubectl get secrets -n secupi`\n2. Attempt to manually pull the image using the same credentials to confirm they work:\n```bash\ndocker login registry.gitlab.com -u <GITLAB_USERNAME> -p <GITLAB_PASSWORD>\ndocker pull registry.gitlab.com/secupi/secupi-gateway:7.0.0.59\n```",
+        "priority": "high",
+        "dependencies": [
+          2
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 5,
+        "title": "Set Up PostgreSQL Database with Required Schema",
+        "description": "Prepare a PostgreSQL database instance with the required customers table for Secupi Gateway integration.",
+        "details": "1. Ensure PostgreSQL database instance is accessible (version 10+ recommended)\n2. Create a new database for Secupi Gateway testing:\n```sql\nCREATE DATABASE secupi_test;\n```\n3. Connect to the new database and create the required customers table:\n```sql\n\\c secupi_test\n\nCREATE TABLE customers (\n    id SERIAL PRIMARY KEY,\n    email VARCHAR(255),\n    name VARCHAR(255),\n    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);\n```\n4. Insert sample data for testing email masking functionality:\n```sql\nINSERT INTO customers (email, name) VALUES \n('test@example.com', 'Test User'),\n('admin@company.org', 'Admin User'),\n('customer@domain.net', 'Regular Customer');\n```\n5. Create a dedicated database user for Secupi Gateway with appropriate permissions:\n```sql\nCREATE USER secupi_gateway WITH PASSWORD 'secure_password';\nGRANT CONNECT ON DATABASE secupi_test TO secupi_gateway;\nGRANT USAGE ON SCHEMA public TO secupi_gateway;\nGRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO secupi_gateway;\nGRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO secupi_gateway;\n```\n6. Document the database connection details for use in gateway configuration.",
+        "testStrategy": "1. Verify database creation with `\\l` in psql\n2. Confirm table creation with `\\dt` in psql\n3. Validate sample data with `SELECT * FROM customers;`\n4. Test user permissions by connecting with the secupi_gateway user and running a SELECT query",
+        "priority": "high",
+        "dependencies": [
+          2
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 6,
+        "title": "Generate SSL Certificate for Secupi Gateway",
+        "description": "Create SSL certificates for secure communication between clients and the Secupi Gateway.",
+        "details": "1. Generate a self-signed certificate for development/testing purposes:\n```bash\n# Create directory for certificates\nmkdir -p ssl-certs\ncd ssl-certs\n\n# Generate a private key\nopenssl genrsa -out gateway.key 2048\n\n# Create a certificate signing request\nopenssl req -new -key gateway.key -out gateway.csr -subj \"/CN=secupi-gateway/O=Secupi/C=US\"\n\n# Generate a self-signed certificate (valid for 365 days)\nopenssl x509 -req -days 365 -in gateway.csr -signkey gateway.key -out gateway.crt\n```\n\n2. Create a Java KeyStore (JKS) for the Secupi Gateway:\n```bash\n# Convert the certificate and key to PKCS12 format\nopenssl pkcs12 -export -in gateway.crt -inkey gateway.key \\\n  -out gateway.p12 -name secupi-gateway \\\n  -password pass:keystorepassword\n\n# Convert PKCS12 to Java KeyStore (JKS)\nkeytool -importkeystore \\\n  -srckeystore gateway.p12 -srcstoretype PKCS12 -srcstorepass keystorepassword \\\n  -destkeystore secupi-gateway.jks -deststoretype JKS -deststorepass keystorepassword \\\n  -alias secupi-gateway\n```\n\n3. Create a Kubernetes secret to store the JKS file:\n```bash\nkubectl create secret generic secupi-ssl-cert \\\n  --namespace secupi \\\n  --from-file=keystore.jks=secupi-gateway.jks\n```\n\n4. Document the keystore password and alias for configuration in the next steps.",
+        "testStrategy": "1. Verify certificate generation with `openssl x509 -in gateway.crt -text -noout`\n2. Confirm JKS creation with `keytool -list -v -keystore secupi-gateway.jks -storepass keystorepassword`\n3. Validate Kubernetes secret creation with `kubectl get secret secupi-ssl-cert -n secupi`",
+        "priority": "high",
+        "dependencies": [
+          2
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 7,
+        "title": "Configure Secupi Gateway Environment Variables",
+        "description": "Create a configuration file with all required environment variables for the Secupi Gateway deployment.",
+        "details": "1. Create a custom values file (values-custom.yaml) with the following environment variables:\n```yaml\nenvironment:\n  # Boot URL for gateway initialization\n  - name: SECUPI_BOOT_URL\n    value: \"https://damkil.azure.secupi.com/api/boot/download/1e81d3dee43740fbbcbd669a2c3ca3a7/secupi-boot-ea9abf50-9ebf-4e28-9a54-f56d75dec2e5.jar\"\n  \n  # PostgreSQL connection details\n  - name: GATEWAY_SERVER_HOST\n    value: \"<POSTGRESQL_HOST>\"\n  - name: GATEWAY_SERVER_PORT\n    value: \"5432\"\n  - name: GATEWAY_SERVER_DATABASE\n    value: \"secupi_test\"\n  - name: GATEWAY_SERVER_USERNAME\n    value: \"secupi_gateway\"\n  - name: GATEWAY_SERVER_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: db-credentials\n        key: password\n  \n  # SSL Configuration\n  - name: GATEWAY_SSL_ENABLED\n    value: \"true\"\n  - name: KEYSTORE_SSL_STOREPASS\n    value: \"keystorepassword\"\n  - name: KEYSTORE_SSL_ALIAS\n    value: \"secupi-gateway\"\n  - name: KEYSTORE_SSL_PATH\n    value: \"/opt/secupi/keystore.jks\"\n  \n  # Additional configuration\n  - name: JAVA_OPTS\n    value: \"-Xms2g -Xmx4g\"\n```\n\n2. Create a Kubernetes secret for database credentials:\n```bash\nkubectl create secret generic db-credentials \\\n  --namespace secupi \\\n  --from-literal=password=secure_password\n```\n\n3. Configure volume mounts for the SSL certificate:\n```yaml\nvolumeMounts:\n  - name: ssl-cert\n    mountPath: /opt/secupi/keystore.jks\n    subPath: keystore.jks\n\nvolumes:\n  - name: ssl-cert\n    secret:\n      secretName: secupi-ssl-cert\n```",
+        "testStrategy": "1. Validate YAML syntax with a YAML linter\n2. Verify all required environment variables are included\n3. Confirm secret references are correctly formatted\n4. Check volume mount configuration for the SSL certificate",
+        "priority": "high",
+        "dependencies": [
+          5,
+          6
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 8,
+        "title": "Configure Secupi Gateway Service Settings",
+        "description": "Set up the Kubernetes service configuration for external access to the Secupi Gateway.",
+        "details": "1. Add service configuration to your custom values file (values-custom.yaml):\n```yaml\nservice:\n  type: LoadBalancer  # Use NodePort or ClusterIP if LoadBalancer is not available\n  port: 5432  # Standard PostgreSQL port\n  annotations:\n    # Add any cloud-specific annotations if needed\n    # For example, on AWS:\n    # service.beta.kubernetes.io/aws-load-balancer-internal: \"true\"\n  \n  # If using NodePort, specify a nodePort value\n  # nodePort: 30432\n```\n\n2. Configure resource requests and limits to ensure adequate performance:\n```yaml\nresources:\n  requests:\n    cpu: \"2\"\n    memory: \"4Gi\"\n  limits:\n    cpu: \"4\"\n    memory: \"8Gi\"\n```\n\n3. Set up health checks for the gateway:\n```yaml\nlivenessProbe:\n  tcpSocket:\n    port: 5432\n  initialDelaySeconds: 60\n  periodSeconds: 10\n\nreadinessProbe:\n  tcpSocket:\n    port: 5432\n  initialDelaySeconds: 30\n  periodSeconds: 10\n```\n\n4. Configure image settings to use the specific version required:\n```yaml\nimage:\n  repository: registry.gitlab.com/secupi/secupi-gateway\n  tag: 7.0.0.59\n  pullPolicy: IfNotPresent\n```",
+        "testStrategy": "1. Validate YAML syntax\n2. Review service configuration for compatibility with your Kubernetes environment\n3. Verify resource requests and limits are appropriate for your cluster capacity\n4. Confirm image repository and tag match the requirements",
+        "priority": "medium",
+        "dependencies": [
+          4
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 9,
+        "title": "Deploy Secupi Gateway Using Helm Chart",
+        "description": "Deploy the Secupi Gateway to the Kubernetes cluster using the Helm chart and custom configuration.",
+        "details": "1. Ensure all previous configuration steps are completed\n\n2. Install the Secupi Gateway using Helm:\n```bash\nhelm install secupi-gateway ./secupi-chart \\\n  --namespace secupi \\\n  -f values-custom.yaml\n```\n\n3. Monitor the deployment status:\n```bash\nkubectl get pods -n secupi -w\n```\n\n4. Check the logs for any startup errors:\n```bash\nkubectl logs -f -l app=secupi-gateway -n secupi\n```\n\n5. Verify the service is properly exposed:\n```bash\nkubectl get svc -n secupi\n```\n\n6. If using LoadBalancer, obtain the external IP/hostname:\n```bash\nEXTERNAL_IP=$(kubectl get svc secupi-gateway -n secupi -o jsonpath='{.status.loadBalancer.ingress[0].ip}')\necho \"Secupi Gateway is accessible at: $EXTERNAL_IP:5432\"\n```\n\n7. If using NodePort, obtain the node port:\n```bash\nNODE_PORT=$(kubectl get svc secupi-gateway -n secupi -o jsonpath='{.spec.ports[0].nodePort}')\necho \"Secupi Gateway is accessible at: <NODE_IP>:$NODE_PORT\"\n```",
+        "testStrategy": "1. Verify pod is running with `kubectl get pods -n secupi`\n2. Check pod logs for successful startup\n3. Confirm service is properly configured with `kubectl describe svc secupi-gateway -n secupi`\n4. Validate external accessibility by attempting to connect to the service endpoint",
+        "priority": "high",
+        "dependencies": [
+          3,
+          7,
+          8
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 10,
+        "title": "Configure Network Policies for Secupi Gateway",
+        "description": "Implement Kubernetes network policies to secure the Secupi Gateway deployment.",
+        "details": "1. Create a network policy to control inbound traffic to the Secupi Gateway:\n```bash\nkubectl apply -f - <<EOF\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: secupi-gateway-network-policy\n  namespace: secupi\nspec:\n  podSelector:\n    matchLabels:\n      app: secupi-gateway\n  policyTypes:\n  - Ingress\n  - Egress\n  ingress:\n  - from:\n    # Allow traffic from specific sources (customize as needed)\n    - ipBlock:\n        cidr: 0.0.0.0/0  # Restrict this in production\n    ports:\n    - protocol: TCP\n      port: 5432\n  egress:\n  - to:\n    # Allow outbound traffic to PostgreSQL database\n    - ipBlock:\n        cidr: <POSTGRESQL_CIDR>  # Specify your PostgreSQL network CIDR\n    ports:\n    - protocol: TCP\n      port: 5432\n  - to:\n    # Allow outbound traffic to Secupi Management Server\n    - ipBlock:\n        cidr: 0.0.0.0/0  # Restrict this in production\n    ports:\n    - protocol: TCP\n      port: 443\nEOF\n```\n\n2. Verify the network policy is applied:\n```bash\nkubectl get networkpolicies -n secupi\nkubectl describe networkpolicy secupi-gateway-network-policy -n secupi\n```\n\n3. For production environments, further restrict the network policies to only allow traffic from authorized sources and to specific destinations.",
+        "testStrategy": "1. Verify network policy creation with `kubectl get networkpolicies -n secupi`\n2. Test connectivity from an authorized source to the gateway\n3. Attempt to connect from an unauthorized source (should be blocked if policies are correctly configured)\n4. Verify outbound connectivity to the PostgreSQL database and Secupi Management Server",
+        "priority": "medium",
+        "dependencies": [
+          9
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 11,
+        "title": "Test Database Connection Through Secupi Gateway",
+        "description": "Verify that database clients can connect to PostgreSQL through the Secupi Gateway.",
+        "details": "1. Install a PostgreSQL client for testing (e.g., psql):\n```bash\n# For Ubuntu/Debian\napt-get update && apt-get install -y postgresql-client\n\n# For CentOS/RHEL\nyum install -y postgresql\n\n# For macOS\nbrew install postgresql\n```\n\n2. Obtain the Secupi Gateway endpoint:\n```bash\n# If using LoadBalancer\nGATEWAY_ENDPOINT=$(kubectl get svc secupi-gateway -n secupi -o jsonpath='{.status.loadBalancer.ingress[0].ip}'):5432\n\n# If using NodePort\nNODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].address}')\nNODE_PORT=$(kubectl get svc secupi-gateway -n secupi -o jsonpath='{.spec.ports[0].nodePort}')\nGATEWAY_ENDPOINT=$NODE_IP:$NODE_PORT\n```\n\n3. Connect to the database through the gateway:\n```bash\nPGSSLMODE=require psql \"host=$GATEWAY_ENDPOINT dbname=secupi_test user=secupi_gateway password=secure_password\"\n```\n\n4. If using self-signed certificates, you may need to disable certificate verification:\n```bash\nPGSSLMODE=require PGSSLROOTCERT=gateway.crt psql \"host=$GATEWAY_ENDPOINT dbname=secupi_test user=secupi_gateway password=secure_password sslmode=verify-ca\"\n```\n\n5. Execute a test query to verify connectivity:\n```sql\nSELECT * FROM customers;\n```\n\n6. Alternatively, test with a GUI client like DBeaver:\n   - Create a new PostgreSQL connection\n   - Set the host to the gateway endpoint\n   - Configure SSL settings (enable SSL, provide the certificate if needed)\n   - Test the connection and execute queries",
+        "testStrategy": "1. Verify successful connection to the database through the gateway\n2. Confirm query execution works correctly\n3. Check that email masking is applied (emails should appear as xxxxxxx)\n4. Test with different database clients (psql, DBeaver, etc.)",
+        "priority": "high",
+        "dependencies": [
+          9
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 12,
+        "title": "Verify Email Masking Functionality",
+        "description": "Test and verify that the Secupi Gateway correctly masks email addresses in query results.",
+        "details": "1. Connect to the PostgreSQL database directly (bypassing the gateway):\n```bash\npsql \"host=<POSTGRESQL_HOST> port=5432 dbname=secupi_test user=secupi_gateway password=secure_password\"\n```\n\n2. Execute a query to view the unmasked data:\n```sql\nSELECT * FROM customers;\n```\n\n3. Note the actual email addresses in the results\n\n4. Now connect through the Secupi Gateway:\n```bash\nPGSSLMODE=require psql \"host=$GATEWAY_ENDPOINT dbname=secupi_test user=secupi_gateway password=secure_password\"\n```\n\n5. Execute the same query:\n```sql\nSELECT * FROM customers;\n```\n\n6. Verify that email addresses are masked (should appear as xxxxxxx)\n\n7. Test different query patterns to ensure masking is consistent:\n```sql\nSELECT email FROM customers;\nSELECT * FROM customers WHERE email LIKE '%example%';\nSELECT name, email FROM customers ORDER BY email;\n```\n\n8. Document the results, including screenshots or logs showing the masking functionality working correctly.",
+        "testStrategy": "1. Compare query results between direct database connection and gateway connection\n2. Verify all email addresses are properly masked when accessed through the gateway\n3. Test various query patterns to ensure masking works in all scenarios\n4. Document any unexpected behavior or issues",
+        "priority": "high",
+        "dependencies": [
+          11
+        ],
+        "status": "done",
+        "subtasks": []
+      },
+      {
+        "id": 13,
+        "title": "Configure Secupi Gateway Monitoring",
+        "description": "Set up monitoring for the Secupi Gateway to track performance and health metrics.",
+        "details": "1. Enable Prometheus metrics in the Secupi Gateway configuration:\n```yaml\n# Add to values-custom.yaml\nmetrics:\n  enabled: true\n  serviceMonitor:\n    enabled: true  # If using Prometheus Operator\n    interval: 15s\n    scrapeTimeout: 10s\n```\n\n2. If not using Prometheus Operator, create a Prometheus scrape configuration:\n```yaml\n- job_name: 'secupi-gateway'\n  kubernetes_sd_configs:\n  - role: pod\n  relabel_configs:\n  - source_labels: [__meta_kubernetes_pod_label_app]\n    action: keep\n    regex: secupi-gateway\n  - source_labels: [__meta_kubernetes_pod_container_port_name]\n    action: keep\n    regex: metrics\n```\n\n3. Create a basic Grafana dashboard for monitoring the gateway:\n```bash\n# Example dashboard JSON file (secupi-dashboard.json)\n{\n  \"dashboard\": {\n    \"title\": \"Secupi Gateway Monitoring\",\n    \"panels\": [\n      {\n        \"title\": \"Gateway Connections\",\n        \"type\": \"graph\",\n        \"targets\": [\n          { \"expr\": \"secupi_gateway_connections_total\" }\n        ]\n      },\n      {\n        \"title\": \"Query Response Time\",\n        \"type\": \"graph\",\n        \"targets\": [\n          { \"expr\": \"secupi_gateway_query_duration_seconds\" }\n        ]\n      },\n      {\n        \"title\": \"Memory Usage\",\n        \"type\": \"graph\",\n        \"targets\": [\n          { \"expr\": \"container_memory_usage_bytes{pod=~\\\"secupi-gateway.*\\\"}\" }\n        ]\n      }\n    ]\n  }\n}\n```\n\n4. Import the dashboard into Grafana if available in your environment\n\n5. Set up basic alerting for critical metrics (high memory usage, connection failures, etc.)",
+        "testStrategy": "1. Verify metrics endpoint is accessible with `curl http://<pod-ip>:9090/metrics`\n2. Confirm Prometheus is scraping the metrics\n3. Check Grafana dashboard displays the metrics correctly\n4. Test alerting by simulating failure conditions",
+        "priority": "medium",
+        "dependencies": [
+          9
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 14,
+        "title": "Implement Backup and Restore Procedures",
+        "description": "Create procedures for backing up and restoring the Secupi Gateway configuration.",
+        "details": "1. Create a script to backup the Kubernetes resources:\n```bash\n#!/bin/bash\n# secupi-backup.sh\n\nBACKUP_DIR=\"./secupi-backup-$(date +%Y%m%d-%H%M%S)\"\nmkdir -p $BACKUP_DIR\n\n# Backup Kubernetes resources\necho \"Backing up Kubernetes resources...\"\nkubectl get secret gitlab-registry-secret -n secupi -o yaml > $BACKUP_DIR/gitlab-registry-secret.yaml\nkubectl get secret db-credentials -n secupi -o yaml > $BACKUP_DIR/db-credentials.yaml\nkubectl get secret secupi-ssl-cert -n secupi -o yaml > $BACKUP_DIR/secupi-ssl-cert.yaml\nkubectl get networkpolicy -n secupi -o yaml > $BACKUP_DIR/networkpolicies.yaml\n\n# Backup Helm release\necho \"Backing up Helm release...\"\nhelm get values secupi-gateway -n secupi > $BACKUP_DIR/secupi-gateway-values.yaml\n\n# Backup SSL certificates\necho \"Backing up SSL certificates...\"\ncp ssl-certs/gateway.key $BACKUP_DIR/\ncp ssl-certs/gateway.crt $BACKUP_DIR/\ncp ssl-certs/secupi-gateway.jks $BACKUP_DIR/\n\necho \"Backup completed: $BACKUP_DIR\"\n```\n\n2. Create a restore script:\n```bash\n#!/bin/bash\n# secupi-restore.sh\n\nif [ -z \"$1\" ]; then\n  echo \"Usage: $0 <backup-directory>\"\n  exit 1\nfi\n\nBACKUP_DIR=$1\n\nif [ ! -d \"$BACKUP_DIR\" ]; then\n  echo \"Backup directory not found: $BACKUP_DIR\"\n  exit 1\nfi\n\n# Restore Kubernetes resources\necho \"Restoring Kubernetes resources...\"\nkubectl apply -f $BACKUP_DIR/gitlab-registry-secret.yaml\nkubectl apply -f $BACKUP_DIR/db-credentials.yaml\nkubectl apply -f $BACKUP_DIR/secupi-ssl-cert.yaml\nkubectl apply -f $BACKUP_DIR/networkpolicies.yaml\n\n# Restore Helm release\necho \"Restoring Helm release...\"\nhelm upgrade --install secupi-gateway ./secupi-chart \\\n  --namespace secupi \\\n  -f $BACKUP_DIR/secupi-gateway-values.yaml\n\necho \"Restore completed\"\n```\n\n3. Make the scripts executable:\n```bash\nchmod +x secupi-backup.sh secupi-restore.sh\n```\n\n4. Document the backup and restore procedures, including recommended backup frequency and retention policy.",
+        "testStrategy": "1. Execute the backup script and verify all resources are backed up\n2. Test the restore procedure in a separate namespace\n3. Verify the restored gateway functions correctly\n4. Document any issues or improvements needed",
+        "priority": "medium",
+        "dependencies": [
+          9
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 15,
+        "title": "Create Deployment Documentation",
+        "description": "Prepare comprehensive documentation for deploying and managing the Secupi Gateway on Kubernetes.",
+        "details": "1. Create a README.md file with the following sections:\n\n## Prerequisites\n- Kubernetes cluster (version 1.16+)\n- Helm 3\n- PostgreSQL database instance\n- Network access to required services\n- Minimum resource requirements\n\n## Deployment Steps\n1. Set up Kubernetes environment\n2. Create Docker registry secret\n3. Configure SSL certificates\n4. Deploy Secupi Gateway\n5. Verify functionality\n\n## Configuration Options\n- Document all available configuration parameters\n- Provide examples for common scenarios\n\n## Troubleshooting\n- Common issues and solutions\n- How to check logs and diagnose problems\n\n## Maintenance\n- Backup and restore procedures\n- Upgrading the gateway\n- Monitoring and alerting\n\n2. Include example configuration files and scripts\n\n3. Add diagrams showing the architecture and data flow\n\n4. Create a separate document for security considerations and best practices",
+        "testStrategy": "1. Review documentation for completeness and accuracy\n2. Have a team member follow the documentation to deploy the gateway\n3. Identify and address any gaps or unclear instructions\n4. Verify all examples and commands work as documented",
+        "priority": "medium",
+        "dependencies": [
+          9,
+          10,
+          11,
+          12,
+          13,
+          14
+        ],
+        "status": "pending",
+        "subtasks": []
+      },
+      {
+        "id": 16,
+        "title": "Implement Horizontal Pod Autoscaling for Secupi Gateway",
+        "description": "Configure Horizontal Pod Autoscaling (HPA) to automatically scale the Secupi Gateway based on resource utilization.",
+        "details": "1. Enable metrics-server if not already installed in your cluster:\n```bash\nkubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml\n```\n\n2. Verify metrics-server is running:\n```bash\nkubectl get deployment metrics-server -n kube-system\n```\n\n3. Create an HPA resource for the Secupi Gateway:\n```bash\nkubectl apply -f - <<EOF\napiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: secupi-gateway-hpa\n  namespace: secupi\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: secupi-gateway\n  minReplicas: 1\n  maxReplicas: 5\n  metrics:\n  - type: Resource\n    resource:\n      name: cpu\n      target:\n        type: Utilization\n        averageUtilization: 70\n  - type: Resource\n    resource:\n      name: memory\n      target:\n        type: Utilization\n        averageUtilization: 80\nEOF\n```\n\n4. Update your values-custom.yaml to enable autoscaling:\n```yaml\nautoscaling:\n  enabled: true\n  minReplicas: 1\n  maxReplicas: 5\n  targetCPUUtilizationPercentage: 70\n  targetMemoryUtilizationPercentage: 80\n```\n\n5. Apply the updated configuration:\n```bash\nhelm upgrade secupi-gateway ./secupi-chart \\\n  --namespace secupi \\\n  -f values-custom.yaml\n```\n\n6. Monitor the HPA status:\n```bash\nkubectl get hpa -n secupi\nkubectl describe hpa secupi-gateway-hpa -n secupi\n```",
+        "testStrategy": "1. Verify HPA is correctly configured with `kubectl get hpa -n secupi`\n2. Generate load on the gateway to trigger scaling\n3. Monitor pod count to confirm autoscaling works\n4. Check HPA events with `kubectl describe hpa secupi-gateway-hpa -n secupi`",
+        "priority": "medium",
+        "dependencies": [
+          9
+        ],
+        "status": "pending",
+        "subtasks": []
+      }
+    ],
+    "metadata": {
+      "created": "2025-08-08T15:12:17.141Z",
+      "updated": "2025-08-08T17:01:25.340Z",
+      "description": "Tasks for master context"
+    }
+  }
+}

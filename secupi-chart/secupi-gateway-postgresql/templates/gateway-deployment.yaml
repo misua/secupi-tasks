@@ -1,0 +1,132 @@
+{{ $Global := . }}
+{{- $requiredGATEWAY_SERVER_HOST := .Values.gateway.env.GATEWAY_SERVER_HOST | required ".Values.gateway.env.GATEWAY_SERVER_HOST is required." -}}
+{{- $requiredSECUPI_BOOT_URL := .Values.gateway.env.SECUPI_BOOT_URL | required ".Values.gateway.env.SECUPI_BOOT_URL is required." -}}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "secupi_gateway.name" . }}
+  labels:
+    app: {{ include "secupi_gateway.label" . }}
+    {{- include "secupi_common.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ include "secupi_gateway.label" . }}
+  replicas: {{ include "secupi_gateway_replicas" . }}
+  {{- if gt (int (include "secupi_gateway_replicas" .)) 1 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "secupi_gateway.label" . }}
+      annotations:
+        checksum/keystore: {{ include (print $.Template.BasePath "/gateway-keystore-secret.yaml") . | sha256sum }}
+        checksum/truststore: {{ include (print $.Template.BasePath "/gateway-truststore-secret.yaml") . | sha256sum }}          
+        {{- if not (empty .Values.default.podExtraAnnotations) }}
+        {{- toYaml .Values.default.podExtraAnnotations | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.gateway.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+      {{- end }}
+      {{ include "spec.securityContext" . | indent 6 }}
+      {{- if .Values.gateway.serviceAccount.create }}
+      serviceAccountName: {{ .Values.gateway.serviceAccount.name | default (include "secupi_gateway.name" .) }}
+      {{- else if .Values.gateway.serviceAccount.name }}
+      serviceAccountName: {{ .Values.gateway.serviceAccount.name }}
+      {{- end }}
+      {{- if gt (int (include "secupi_gateway_replicas" .)) 1 }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - {{ include "secupi_gateway.label" . }}
+                topologyKey: kubernetes.io/hostname
+              weight: 1
+      {{- end }}
+      {{- with .Values.image.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 600
+      initContainers:
+        - name: gateway-init
+          image: {{ required "image is required" (include "images.gateway" .) | quote }}
+          command: ['sh', '-c', 'cp -r /opt/secupi/* /mnt/secupi/']
+          {{ include "containter.securityContext" . | indent 10 }}
+          {{- include "resources" (dict "Resources" .Values.gateway.resources "ClusterSizeType" .Values.clusterSizeType) | nindent 10 }}
+          volumeMounts:
+            - name: opt-secupi
+              mountPath: /mnt/secupi
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: {{ include "secupi_gateway.name" . }}
+          image: {{ required "image is required" (include "images.gateway" .) | quote }}
+          imagePullPolicy: {{ .Values.image.imagePullPolicy }}
+          ports:
+            - name: gateway
+              containerPort: {{ include "secupi_gateway_target_port" . }}
+            - name: hazelcast
+              containerPort: 5701
+          env:
+            {{- range $key, $value := .Values.gateway.env }}
+            - name: {{ $key }}
+              value: {{ tpl ($value | toString) $Global | quote }}
+            {{- end }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ include "secupi_gateway_target_port" . }}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          readinessProbe:
+            tcpSocket:
+              port: {{ include "secupi_gateway_target_port" . }}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          {{ include "containter.securityContext" . | indent 10 }}
+          {{- include "resources" (dict "Resources" .Values.gateway.resources "ClusterSizeType" .Values.clusterSizeType) | nindent 10 }}
+          volumeMounts:
+            - name: opt-secupi
+              mountPath: /opt/secupi
+            - name: tmp
+              mountPath: /tmp
+            - name: keystore-jks
+              mountPath: /opt/secupi/etc
+              readOnly: true
+            {{- if .Values.gateway.truststore }}
+            - name: truststore-jks
+              mountPath: /etc/ssl/certs/java
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: opt-secupi
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: keystore-jks
+          secret:
+            secretName: {{ include "secupi_gateway_keystore.secret.name" . }}
+        {{- if .Values.gateway.truststore }}
+        - name: truststore-jks
+          secret:
+            secretName: {{ include "secupi_gateway_truststore.secret.name" . }}
+        {{- end }}

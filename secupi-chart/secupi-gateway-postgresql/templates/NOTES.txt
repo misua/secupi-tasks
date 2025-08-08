@@ -1,0 +1,38 @@
+
+**************************************************************************
+*** PLEASE BE PATIENT: SecuPi Gateway may take a few minutes to start ***
+**************************************************************************
+
+{{- $secupi_gateway_port := include "secupi_gateway_port" .  | toString }}
+
+NOTE: You must use FQDN and not IP to connect to the SecuPi Gateway
+{{- $Global := . -}}
+{{- if .Values.gateway.ingress.enabled }}
+  {{ printf "%s" "" }}
+SecuPi Gateway URL:
+{{- range .Values.gateway.ingress.hosts }}
+  postgresql://{{ tpl (.) $Global }}{{- if ne $secupi_gateway_port "443" }}:{{ print $secupi_gateway_port }}{{ end }}/
+{{- end }}
+
+{{- else if contains "ClusterIP" .Values.gateway.service.type }}
+Run the following command to access the service: kubectl port-forward service/{{ include "secupi_gateway.name" . }} <your local forwarded port>:{{ print $secupi_gateway_port }}
+  {{ printf "%s" "" }}
+SecuPi Gateway URL: postgresql://127.0.0.1:<your local forwarded port>/
+  {{ printf "%s" "" }}
+
+{{- else if contains "LoadBalancer" .Values.gateway.service.type }}
+
+NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+Watch the service status with: kubectl get svc --namespace {{ .Release.Namespace }} -w {{ include "secupi_gateway.name" . }}
+  {{ printf "%s" "" }}
+export GATEWAY_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "secupi_gateway.name" . }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "SecuPi Gateway URL: postgresql://$GATEWAY_IP{{- if ne $secupi_gateway_port "443" }}:{{ print $secupi_gateway_port }}{{ end }}/"
+  {{ printf "%s" "" }}
+
+{{- else if contains "NodePort" .Values.gateway.service.type }}
+  {{ printf "%s" "" }}
+export GATEWAY_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+export GATEWAY_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "secupi_gateway.name" . }})
+echo postgresql://$GATEWAY_IP:$GATEWAY_PORT
+
+{{- end }}
