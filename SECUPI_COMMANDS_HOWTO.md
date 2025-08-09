@@ -106,6 +106,12 @@ helm install postgresql bitnami/postgresql -n secupi -f postgresql-tls-values.ya
 - Enables SSL/TLS on PostgreSQL with auto-generated certificates
 - `preferServerCiphers: true` ensures stronger cipher preferences
 - PostgreSQL is now ready to accept secure connections
+- **Note**: The `postgresql-tls-values.yaml` file is a reusable Helm values file (not a patch) that can be used across multiple PostgreSQL deployments. This modular approach keeps TLS configuration separate from other PostgreSQL settings and allows for consistent TLS setup across different environments.
+
+**Reusable Configuration**: To deploy PostgreSQL with the same TLS settings in a different namespace or environment:
+```bash
+helm install postgresql-prod bitnami/postgresql -n production -f postgresql-tls-values.yaml
+```
 
 ### 6. Generate SSL Certificates for Secupi Gateway
 ```bash
