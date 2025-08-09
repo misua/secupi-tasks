@@ -226,6 +226,19 @@ psql -h 127.0.0.1 -p 5433 -U postgres -d postgres -c "SELECT * FROM customers;"
    - Check that pods are running: `kubectl get pods -n secupi`
    - Restart port-forward if it exits: `kubectl port-forward service/secupi-gateway-gateway 5433:5432 -n secupi &`
 
+5. **k3d Cluster Access Issues After Stopping**:
+   - k3d clusters are ephemeral by default; stopping or deleting a cluster removes all workloads and state
+   - To prevent loss of access or data:
+     - Always recreate the cluster using the same creation commands from the guide
+     - For persistent data, use external PostgreSQL or configure persistent volumes
+     - Document your cluster recreation steps and keep configuration files safe
+   - To recreate the cluster after stopping:
+     ```bash
+     k3d cluster create secupi-cluster --port "5432:5432@loadbalancer" --wait
+     kubectl create namespace secupi
+     # Then redeploy all components using the steps in this guide
+     ```
+
 ## Cleanup
 
 To remove unused secrets:
