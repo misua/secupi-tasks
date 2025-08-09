@@ -45,3 +45,9 @@ kubeconfig*
 # Local development artifacts
 *.tar.gz
 *.tgz
+
+# IDE and tool specific folders
+.taskmaster/
+.cursor/
+.codeium/
+.windsurf/
